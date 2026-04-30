@@ -14,15 +14,25 @@ services:
       NODE_ENV: production
       PORT: 8082
       DATABASE_PATH: /data/licenseserver.db
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-changeme}            # Override with a strong token!
-      VAULT_WALLET_ADDRESS: ${VAULT_WALLET_ADDRESS:-}  # Your Solana wallet for payments
+
+      # ── Required ───────────────────────────────────────────────────────────────
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-changeme}            # Change this! Protects all /admin/* routes
+      VAULT_WALLET_ADDRESS: ${VAULT_WALLET_ADDRESS:-}  # Global fallback vault (can be overridden per product)
+
+      # ── Optional ───────────────────────────────────────────────────────────────
       SOLANA_RPC: ${SOLANA_RPC:-https://api.mainnet-beta.solana.com}
-      MONTHLY_PRICE_SOL: ${MONTHLY_PRICE_SOL:-0.5}
-      ANNUAL_PRICE_SOL: ${ANNUAL_PRICE_SOL:-1.5}
-      LIFETIME_PRICE_SOL: ${LIFETIME_PRICE_SOL:-3}
-      MONTHLY_PRICE_USDC: ${MONTHLY_PRICE_USDC:-49}
-      ANNUAL_PRICE_USDC: ${ANNUAL_PRICE_USDC:-149}
-      LIFETIME_PRICE_USDC: ${LIFETIME_PRICE_USDC:-299}
+
+      # ── Global fallback pricing (optional) ─────────────────────────────────────
+      # Pricing is managed per-product in the admin panel.
+      # These values are only used as a fallback for products that have no price set.
+      # Leave them out if you set prices exclusively through the admin panel.
+      # MONTHLY_PRICE_SOL: 0.5
+      # ANNUAL_PRICE_SOL: 1.5
+      # LIFETIME_PRICE_SOL: 3
+      # MONTHLY_PRICE_USDC: 49
+      # ANNUAL_PRICE_USDC: 149
+      # LIFETIME_PRICE_USDC: 299
+
     restart: unless-stopped
 
 volumes:

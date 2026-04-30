@@ -1,14 +1,15 @@
 # License Manager
 
-A self-hosted software licensing server with **Solana SOL payment support** and a built-in React admin panel — all in a single Docker container.
+A self-hosted software licensing server with **multi-product support**, **Solana SOL/USDC payment verification**, and a built-in React admin panel — all in a single Docker container.
 
 ## Features
 
-- 🔑 License key generation and validation
+- 📦 **Multi-product** — manage multiple products, each with its own pricing and payment vault
+- 🔑 License key generation, validation, activation, and revocation
 - ⛓️ On-chain SOL & USDC payment verification (Solana mainnet)
-- 🛒 Self-service purchase flow (pricing → invoice → pay → license auto-issued)
-- 🖥️ Built-in admin panel (accessible at the same port — no separate deployment)
-- 📦 SQLite database — zero external dependencies
+- 🛒 Self-service purchase flow — customers pay on-chain, license is auto-issued
+- 🖥️ Built-in admin panel (same port, no separate deployment needed)
+- 🗄️ SQLite database — zero external dependencies
 - 🔒 Token-protected admin API
 
 ---
@@ -28,6 +29,8 @@ docker run -d \
 Admin panel → **http://localhost:8082**  
 API → **http://localhost:8082/license**, **/purchase**, **/admin**
 
+After starting, open the admin panel and go to **Products** to create your first product and set its pricing.
+
 ---
 
 ## docker-compose
@@ -43,11 +46,13 @@ services:
       - license_data:/data
     environment:
       ADMIN_TOKEN: your-secret-token
-      VAULT_WALLET_ADDRESS: YourSolanaWalletAddress
+      VAULT_WALLET_ADDRESS: YourSolanaWalletAddress   # global fallback vault
       SOLANA_RPC: https://api.mainnet-beta.solana.com
-      MONTHLY_PRICE_SOL: 0.5
-      ANNUAL_PRICE_SOL: 1.5
-      LIFETIME_PRICE_SOL: 3
+      # Pricing is managed per-product in the admin panel.
+      # Uncomment below only if you want a global price fallback.
+      # MONTHLY_PRICE_SOL: 0.5
+      # ANNUAL_PRICE_SOL: 1.5
+      # LIFETIME_PRICE_SOL: 3
     restart: unless-stopped
 
 volumes:
@@ -58,35 +63,53 @@ volumes:
 
 ## Environment Variables
 
+| Variable | Required | Description |
+|---|---|---|
+| `ADMIN_TOKEN` | **Yes** | Secret token for all `/admin/*` routes — change from default! |
+| `VAULT_WALLET_ADDRESS` | **Yes** | Global fallback Solana wallet for receiving payments |
+| `SOLANA_RPC` | No | RPC endpoint (default: public mainnet — use Helius/QuickNode in production) |
+| `PORT` | No | HTTP port (default: `8082`) |
+| `DATABASE_PATH` | No | SQLite file path (default: `/data/licenseserver.db`) |
+
+### Global fallback pricing (optional)
+
+Pricing is set **per product** in the admin panel under **Products → Edit**. The env vars below are only used as a fallback for any product that doesn't have its own price set. You do not need to set these if you manage all pricing through the admin panel.
+
 | Variable | Default | Description |
 |---|---|---|
-| `ADMIN_TOKEN` | `changeme` | Secret token for all `/admin/*` routes |
-| `VAULT_WALLET_ADDRESS` | — | Solana wallet that receives payments |
-| `SOLANA_RPC` | `https://api.mainnet-beta.solana.com` | Solana RPC endpoint |
-| `PORT` | `8082` | HTTP port |
-| `DATABASE_PATH` | `/data/licenseserver.db` | SQLite file path (keep on a volume) |
-| `MONTHLY_PRICE_SOL` | `0.5` | Monthly plan price in SOL |
-| `ANNUAL_PRICE_SOL` | `1.5` | Annual plan price in SOL |
-| `LIFETIME_PRICE_SOL` | `3` | Lifetime plan price in SOL |
-| `MONTHLY_PRICE_USDC` | `49` | Monthly plan price in USDC |
-| `ANNUAL_PRICE_USDC` | `149` | Annual plan price in USDC |
-| `LIFETIME_PRICE_USDC` | `299` | Lifetime plan price in USDC |
+| `MONTHLY_PRICE_SOL` | `0.5` | Fallback monthly price in SOL |
+| `ANNUAL_PRICE_SOL` | `1.5` | Fallback annual price in SOL |
+| `LIFETIME_PRICE_SOL` | `3` | Fallback lifetime price in SOL |
+| `MONTHLY_PRICE_USDC` | `49` | Fallback monthly price in USDC |
+| `ANNUAL_PRICE_USDC` | `149` | Fallback annual price in USDC |
+| `LIFETIME_PRICE_USDC` | `299` | Fallback lifetime price in USDC |
+
+---
+
+## Products & Pricing
+
+Each product you create in the admin panel can have:
+- Its own SOL and USDC pricing for monthly, annual, and lifetime plans
+- Its own Solana vault wallet address (payments go directly to that wallet)
+- An active/inactive status (inactive products cannot be purchased)
+
+When a purchase session is created with a `productId`, the server uses that product's pricing. Any price field left blank on the product falls back to the global env var values.
 
 ---
 
 ## API — Application Integration
 
-### 1. Get pricing
+### 1. Get pricing for a product
 
 ```
-GET /purchase/pricing
+GET /purchase/pricing?productId=1
 ```
 
 ### 2. Create a purchase session
 
 ```
 POST /purchase/init
-Body: { "email": "user@example.com", "name": "John", "plan": "monthly", "currency": "SOL" }
+Body: { "email": "user@example.com", "name": "John", "plan": "monthly", "currency": "SOL", "productId": 1 }
 → { purchaseId, walletAddress, expectedAmountSol, expiresAt }
 ```
 
@@ -109,7 +132,7 @@ Body: { "key": "XXXX-XXXX-XXXX-XXXX", "instanceId": "machine-id" }
 
 ## Data Persistence
 
-The SQLite database is stored at `/data/licenseserver.db` inside the container. Always mount `/data` as a volume — otherwise all data is lost when the container restarts.
+The SQLite database is stored at `/data/licenseserver.db`. Always mount `/data` as a volume:
 
 ```bash
 -v license_data:/data     # named volume (recommended)
