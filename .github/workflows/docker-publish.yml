@@ -5,15 +5,41 @@ on:
     branches:
       - main
     tags:
-      - "v*"               # Trigger on version tags: v1.0.0, v1.2.3, etc.
-  workflow_dispatch:       # Allow manual trigger from the Actions tab
+      - "v*"
+  workflow_dispatch:       # Always triggers when run manually from the Actions tab
 
 env:
   IMAGE_NAME: license-manager
 
 jobs:
+  # ── Gate: only proceed if commit message contains [push to dockerhub] ──────────
+  check-trigger:
+    runs-on: ubuntu-latest
+    outputs:
+      should_push: ${{ steps.check.outputs.should_push }}
+    steps:
+      - name: Check commit message or event type
+        id: check
+        run: |
+          MSG="${{ github.event.head_commit.message }}"
+          EVENT="${{ github.event_name }}"
+
+          if [[ "$EVENT" == "workflow_dispatch" || "$EVENT" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            echo "should_push=true" >> $GITHUB_OUTPUT
+            echo "✅ Docker push triggered via $EVENT"
+          elif echo "$MSG" | grep -qF "[push to dockerhub]"; then
+            echo "should_push=true" >> $GITHUB_OUTPUT
+            echo "✅ Docker push triggered by commit message keyword"
+          else
+            echo "should_push=false" >> $GITHUB_OUTPUT
+            echo "⏭️ Skipping Docker push — add [push to dockerhub] to commit message to trigger"
+          fi
+
+  # ── Build & push (only runs when gate passes) ─────────────────────────────────
   build-and-push:
     runs-on: ubuntu-latest
+    needs: check-trigger
+    if: needs.check-trigger.outputs.should_push == 'true'
     permissions:
       contents: read
 
