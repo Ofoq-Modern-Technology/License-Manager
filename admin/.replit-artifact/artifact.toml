@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/license-admin/"
+title = "License Admin"
+version = "1.0.0"
+id = "artifacts/license-admin"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/license-admin/" ]
+localPort = 21137
+
+[services.development]
+run = "pnpm --filter @workspace/license-admin run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/license-admin", "run", "build" ]
+publicDir = "artifacts/license-admin/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21137"
+BASE_PATH = "/license-admin/"
