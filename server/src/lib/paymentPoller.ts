@@ -1,5 +1,5 @@
 import { db, purchaseSessionsTable, licensesTable, customersTable, paymentsTable } from "../db/index.js";
-import { eq, and, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { checkWalletBalance, sweepSOL, sweepUSDC } from "./paymentWallet.js";
 import { generateLicenseKey } from "./keygen.js";
 import { getSetting } from "./settings.js";
@@ -21,7 +21,6 @@ async function pollPayments(): Promise<void> {
     .where(eq(purchaseSessionsTable.status, "awaiting_payment"));
 
   for (const session of pending) {
-    // Mark expired
     if (session.expiresAt < now) {
       await db.update(purchaseSessionsTable)
         .set({ status: "expired" })
@@ -69,13 +68,13 @@ async function processPayment(session: Session, receivedBalance: number): Promis
   let expiresAt: Date | null = null;
   if (session.plan === "monthly") expiresAt = new Date(now + 30 * 86_400_000);
   else if (session.plan === "annual") expiresAt = new Date(now + 365 * 86_400_000);
-  // lifetime stays null
 
-  // 3. Generate license
+  // 3. Generate license (inherit productId from the purchase session)
   const key = generateLicenseKey();
   const [license] = await db.insert(licensesTable).values({
     key,
     customerId,
+    productId: session.productId ?? null,
     plan: session.plan,
     status: "active",
     expiresAt,
@@ -107,14 +106,24 @@ async function processPayment(session: Session, receivedBalance: number): Promis
 
   console.log(`[poller] ✓ Payment confirmed for session ${session.id} — license: ${key}`);
 
-  // 6. Sweep funds (fire-and-forget, do not block)
   void sweepFundsAsync(session);
 }
 
 async function sweepFundsAsync(session: Session): Promise<void> {
-  const vaultAddress = await getSetting("vault_wallet_address");
+  // Use product-specific vault if available, fall back to global
+  let vaultAddress: string | null = null;
+  if (session.productId) {
+    const { productsTable } = await import("../db/index.js");
+    const { eq } = await import("drizzle-orm");
+    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, session.productId));
+    vaultAddress = product?.vaultWalletAddress ?? null;
+  }
   if (!vaultAddress) {
-    console.warn("[sweep] VAULT_WALLET_ADDRESS not set — skipping sweep");
+    vaultAddress = await getSetting("vault_wallet_address");
+  }
+
+  if (!vaultAddress) {
+    console.warn("[sweep] No vault address configured — skipping sweep");
     return;
   }
 
@@ -125,15 +134,13 @@ async function sweepFundsAsync(session: Session): Promise<void> {
     } else {
       const vaultKey = process.env.VAULT_WALLET_PRIVATE_KEY ?? "";
       if (!vaultKey) {
-        console.warn("[sweep] VAULT_WALLET_PRIVATE_KEY not set — cannot sweep USDC (no fee payer)");
+        console.warn("[sweep] VAULT_WALLET_PRIVATE_KEY not set — cannot sweep USDC");
         await db.update(purchaseSessionsTable)
           .set({ sweepStatus: "skipped" })
           .where(eq(purchaseSessionsTable.id, session.id));
         return;
       }
-      const usdcMicro = BigInt(
-        Math.floor((session.amountReceivedUsdc ?? 0) * 1_000_000),
-      );
+      const usdcMicro = BigInt(Math.floor((session.amountReceivedUsdc ?? 0) * 1_000_000));
       sig = await sweepUSDC(session.walletPrivateKey, vaultAddress, vaultKey, usdcMicro);
     }
 

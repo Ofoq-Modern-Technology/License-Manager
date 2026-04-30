@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db, customersTable, licensesTable, paymentsTable } from "../db/index.js";
-import { eq, desc, count, and } from "drizzle-orm";
+import { db, customersTable, licensesTable, paymentsTable, purchaseSessionsTable, productsTable } from "../db/index.js";
+import { eq, desc, count } from "drizzle-orm";
 import { generateLicenseKey } from "../lib/keygen.js";
 import { verifyTransaction } from "../lib/solanaVerify.js";
 
@@ -14,8 +14,94 @@ router.get("/stats", async (_req, res) => {
   const [{ total: totalLicenses }] = await db.select({ total: count() }).from(licensesTable);
   const [{ total: pendingPayments }] = await db.select({ total: count() }).from(paymentsTable).where(eq(paymentsTable.status, "pending"));
   const [{ total: verifiedPayments }] = await db.select({ total: count() }).from(paymentsTable).where(eq(paymentsTable.status, "verified"));
+  const [{ total: totalProducts }] = await db.select({ total: count() }).from(productsTable);
 
-  res.json({ totalCustomers, activeLicenses, totalLicenses, pendingPayments, verifiedPayments });
+  res.json({ totalCustomers, activeLicenses, totalLicenses, pendingPayments, verifiedPayments, totalProducts });
+});
+
+// ─── Products ─────────────────────────────────────────────────────────────────
+router.get("/products", async (_req, res) => {
+  const products = await db.select().from(productsTable).orderBy(desc(productsTable.createdAt));
+
+  // Attach license count per product
+  const counts = await db
+    .select({ productId: licensesTable.productId, total: count() })
+    .from(licensesTable)
+    .groupBy(licensesTable.productId);
+  const countMap = Object.fromEntries(counts.map(r => [r.productId, r.total]));
+
+  res.json(products.map(p => ({ ...p, licenseCount: countMap[p.id] ?? 0 })));
+});
+
+router.post("/products", async (req, res) => {
+  const body = z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().optional(),
+    status: z.enum(["active", "inactive"]).default("active"),
+    monthlyPriceSol:  z.coerce.number().positive().optional().nullable(),
+    annualPriceSol:   z.coerce.number().positive().optional().nullable(),
+    lifetimePriceSol: z.coerce.number().positive().optional().nullable(),
+    monthlyPriceUsdc:  z.coerce.number().positive().optional().nullable(),
+    annualPriceUsdc:   z.coerce.number().positive().optional().nullable(),
+    lifetimePriceUsdc: z.coerce.number().positive().optional().nullable(),
+    vaultWalletAddress: z.string().optional().nullable(),
+  }).parse(req.body);
+
+  const [product] = await db.insert(productsTable).values({
+    name: body.name,
+    description: body.description,
+    status: body.status,
+    monthlyPriceSol:  body.monthlyPriceSol  ?? null,
+    annualPriceSol:   body.annualPriceSol   ?? null,
+    lifetimePriceSol: body.lifetimePriceSol ?? null,
+    monthlyPriceUsdc:  body.monthlyPriceUsdc  ?? null,
+    annualPriceUsdc:   body.annualPriceUsdc   ?? null,
+    lifetimePriceUsdc: body.lifetimePriceUsdc ?? null,
+    vaultWalletAddress: body.vaultWalletAddress ?? null,
+  }).returning();
+
+  res.status(201).json(product);
+});
+
+router.put("/products/:id", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const body = z.object({
+    name: z.string().min(1).max(100).optional(),
+    description: z.string().optional().nullable(),
+    status: z.enum(["active", "inactive"]).optional(),
+    monthlyPriceSol:  z.coerce.number().positive().optional().nullable(),
+    annualPriceSol:   z.coerce.number().positive().optional().nullable(),
+    lifetimePriceSol: z.coerce.number().positive().optional().nullable(),
+    monthlyPriceUsdc:  z.coerce.number().positive().optional().nullable(),
+    annualPriceUsdc:   z.coerce.number().positive().optional().nullable(),
+    lifetimePriceUsdc: z.coerce.number().positive().optional().nullable(),
+    vaultWalletAddress: z.string().optional().nullable(),
+  }).parse(req.body);
+
+  const [updated] = await db.update(productsTable)
+    .set({
+      ...(body.name !== undefined            && { name: body.name }),
+      ...(body.description !== undefined     && { description: body.description }),
+      ...(body.status !== undefined          && { status: body.status }),
+      ...(body.monthlyPriceSol  !== undefined && { monthlyPriceSol:  body.monthlyPriceSol }),
+      ...(body.annualPriceSol   !== undefined && { annualPriceSol:   body.annualPriceSol }),
+      ...(body.lifetimePriceSol !== undefined && { lifetimePriceSol: body.lifetimePriceSol }),
+      ...(body.monthlyPriceUsdc  !== undefined && { monthlyPriceUsdc:  body.monthlyPriceUsdc }),
+      ...(body.annualPriceUsdc   !== undefined && { annualPriceUsdc:   body.annualPriceUsdc }),
+      ...(body.lifetimePriceUsdc !== undefined && { lifetimePriceUsdc: body.lifetimePriceUsdc }),
+      ...(body.vaultWalletAddress !== undefined && { vaultWalletAddress: body.vaultWalletAddress }),
+    })
+    .where(eq(productsTable.id, id))
+    .returning();
+
+  if (!updated) { res.status(404).json({ error: "Product not found" }); return; }
+  res.json(updated);
+});
+
+router.delete("/products/:id", async (req, res) => {
+  const id = parseInt(req.params.id);
+  await db.delete(productsTable).where(eq(productsTable.id, id));
+  res.json({ success: true });
 });
 
 // ─── Customers ────────────────────────────────────────────────────────────────
@@ -50,6 +136,8 @@ router.get("/licenses", async (_req, res) => {
       customerId: licensesTable.customerId,
       customerName: customersTable.name,
       customerEmail: customersTable.email,
+      productId: licensesTable.productId,
+      productName: productsTable.name,
       plan: licensesTable.plan,
       status: licensesTable.status,
       instanceId: licensesTable.instanceId,
@@ -61,16 +149,18 @@ router.get("/licenses", async (_req, res) => {
     })
     .from(licensesTable)
     .leftJoin(customersTable, eq(licensesTable.customerId, customersTable.id))
+    .leftJoin(productsTable, eq(licensesTable.productId, productsTable.id))
     .orderBy(desc(licensesTable.createdAt));
 
   res.json(licenses);
 });
 
 router.post("/licenses", async (req, res) => {
-  const { customerId, plan, expiresAt, notes } = z.object({
+  const { customerId, productId, plan, expiresAt, notes } = z.object({
     customerId: z.coerce.number().optional(),
+    productId: z.coerce.number().optional(),
     plan: z.enum(["monthly", "annual", "lifetime"]).default("monthly"),
-    expiresAt: z.string().optional(), // ISO date string
+    expiresAt: z.string().optional(),
     notes: z.string().optional(),
   }).parse(req.body);
 
@@ -80,6 +170,7 @@ router.post("/licenses", async (req, res) => {
   const [license] = await db.insert(licensesTable).values({
     key,
     customerId: customerId ?? null,
+    productId: productId ?? null,
     plan,
     status: "active",
     expiresAt: expiry,
@@ -220,13 +311,14 @@ router.put("/pricing", async (req, res) => {
 
 // ─── Purchase Sessions (admin view) ───────────────────────────────────────────
 router.get("/purchase-sessions", async (_req, res) => {
-  const { purchaseSessionsTable } = await import("../db/index.js");
   const sessions = await db.select({
     id: purchaseSessionsTable.id,
     email: purchaseSessionsTable.email,
     name: purchaseSessionsTable.name,
     plan: purchaseSessionsTable.plan,
     currency: purchaseSessionsTable.currency,
+    productId: purchaseSessionsTable.productId,
+    productName: productsTable.name,
     expectedAmountSol: purchaseSessionsTable.expectedAmountSol,
     expectedAmountUsdc: purchaseSessionsTable.expectedAmountUsdc,
     walletAddress: purchaseSessionsTable.walletAddress,
@@ -238,7 +330,10 @@ router.get("/purchase-sessions", async (_req, res) => {
     amountReceivedUsdc: purchaseSessionsTable.amountReceivedUsdc,
     expiresAt: purchaseSessionsTable.expiresAt,
     createdAt: purchaseSessionsTable.createdAt,
-  }).from(purchaseSessionsTable).orderBy(desc(purchaseSessionsTable.createdAt));
+  })
+    .from(purchaseSessionsTable)
+    .leftJoin(productsTable, eq(purchaseSessionsTable.productId, productsTable.id))
+    .orderBy(desc(purchaseSessionsTable.createdAt));
   res.json(sessions);
 });
 

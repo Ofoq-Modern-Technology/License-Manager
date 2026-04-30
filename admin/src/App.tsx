@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { useState, useEffect } from "react";
 import { Terminal, Lock } from "lucide-react";
 import Dashboard from "@/pages/Dashboard";
+import Products from "@/pages/Products";
 import Customers from "@/pages/Customers";
 import Licenses from "@/pages/Licenses";
 import Payments from "@/pages/Payments";
@@ -73,6 +74,7 @@ function App() {
         <Layout onLogout={() => { localStorage.removeItem("ls_admin_token"); setAuthed(false); }}>
           <Switch>
             <Route path="/" component={Dashboard} />
+            <Route path="/products" component={Products} />
             <Route path="/customers" component={Customers} />
             <Route path="/licenses" component={Licenses} />
             <Route path="/payments" component={Payments} />

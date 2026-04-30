@@ -1,5 +1,20 @@
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 
+export const productsTable = sqliteTable("products", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("active"),
+  monthlyPriceSol:  real("monthly_price_sol"),
+  annualPriceSol:   real("annual_price_sol"),
+  lifetimePriceSol: real("lifetime_price_sol"),
+  monthlyPriceUsdc:  real("monthly_price_usdc"),
+  annualPriceUsdc:   real("annual_price_usdc"),
+  lifetimePriceUsdc: real("lifetime_price_usdc"),
+  vaultWalletAddress: text("vault_wallet_address"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
 export const customersTable = sqliteTable("customers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
@@ -12,6 +27,7 @@ export const licensesTable = sqliteTable("licenses", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   key: text("key").notNull().unique(),
   customerId: integer("customer_id").references(() => customersTable.id),
+  productId: integer("product_id").references(() => productsTable.id),
   plan: text("plan").notNull().default("monthly"),
   status: text("status").notNull().default("active"),
   instanceId: text("instance_id"),
@@ -36,13 +52,13 @@ export const paymentsTable = sqliteTable("payments", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
-// Self-service purchase sessions — one unique payment wallet per purchase
 export const purchaseSessionsTable = sqliteTable("purchase_sessions", {
   id: text("id").primaryKey(),
   email: text("email").notNull(),
   name: text("name").notNull(),
   plan: text("plan").notNull(),
   currency: text("currency").notNull().default("USDC"),
+  productId: integer("product_id").references(() => productsTable.id),
   expectedAmountSol: real("expected_amount_sol"),
   expectedAmountUsdc: real("expected_amount_usdc"),
   walletAddress: text("wallet_address").notNull(),
@@ -58,7 +74,6 @@ export const purchaseSessionsTable = sqliteTable("purchase_sessions", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
-// Runtime-configurable key/value settings (prices, vault address, etc.)
 export const serverSettingsTable = sqliteTable("server_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),

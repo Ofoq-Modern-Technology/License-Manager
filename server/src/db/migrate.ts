@@ -1,6 +1,25 @@
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 
 export function runMigrations(db: BetterSQLite3Database): void {
+  // ── Products (must exist before licenses/sessions reference it) ──────────────
+  db.run(`
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      monthly_price_sol REAL,
+      annual_price_sol REAL,
+      lifetime_price_sol REAL,
+      monthly_price_usdc REAL,
+      annual_price_usdc REAL,
+      lifetime_price_usdc REAL,
+      vault_wallet_address TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `);
+
+  // ── Customers ────────────────────────────────────────────────────────────────
   db.run(`
     CREATE TABLE IF NOT EXISTS customers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -11,6 +30,7 @@ export function runMigrations(db: BetterSQLite3Database): void {
     )
   `);
 
+  // ── Licenses ─────────────────────────────────────────────────────────────────
   db.run(`
     CREATE TABLE IF NOT EXISTS licenses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +47,7 @@ export function runMigrations(db: BetterSQLite3Database): void {
     )
   `);
 
+  // ── Payments ─────────────────────────────────────────────────────────────────
   db.run(`
     CREATE TABLE IF NOT EXISTS payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +64,7 @@ export function runMigrations(db: BetterSQLite3Database): void {
     )
   `);
 
+  // ── Purchase Sessions ────────────────────────────────────────────────────────
   db.run(`
     CREATE TABLE IF NOT EXISTS purchase_sessions (
       id TEXT PRIMARY KEY,
@@ -66,6 +88,7 @@ export function runMigrations(db: BetterSQLite3Database): void {
     )
   `);
 
+  // ── Server Settings ──────────────────────────────────────────────────────────
   db.run(`
     CREATE TABLE IF NOT EXISTS server_settings (
       key TEXT PRIMARY KEY,
@@ -73,6 +96,20 @@ export function runMigrations(db: BetterSQLite3Database): void {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     )
   `);
+
+  // ── Column migrations (safe — ignore if already exist) ──────────────────────
+  const alterColumns = [
+    "ALTER TABLE licenses ADD COLUMN product_id INTEGER REFERENCES products(id)",
+    "ALTER TABLE purchase_sessions ADD COLUMN product_id INTEGER REFERENCES products(id)",
+  ];
+
+  for (const sql of alterColumns) {
+    try {
+      db.run(sql);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 
   console.log("[db] Migrations complete");
 }

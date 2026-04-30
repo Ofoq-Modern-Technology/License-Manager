@@ -1,7 +1,5 @@
 const BASE = "/lapi";
 
-const ADMIN_TOKEN = localStorage.getItem("ls_admin_token") ?? "";
-
 function headers(): HeadersInit {
   return {
     "Content-Type": "application/json",
@@ -20,6 +18,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getStats: () => req<Stats>("/admin/stats"),
+
+  getProducts: () => req<Product[]>("/admin/products"),
+  createProduct: (b: CreateProductBody) =>
+    req<Product>("/admin/products", { method: "POST", body: JSON.stringify(b) }),
+  updateProduct: (id: number, b: Partial<CreateProductBody>) =>
+    req<Product>(`/admin/products/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  deleteProduct: (id: number) =>
+    req<{ success: boolean }>(`/admin/products/${id}`, { method: "DELETE" }),
 
   getCustomers: () => req<Customer[]>("/admin/customers"),
   createCustomer: (b: { name: string; email: string; notes?: string }) =>
@@ -58,6 +64,36 @@ export interface Stats {
   totalLicenses: number;
   pendingPayments: number;
   verifiedPayments: number;
+  totalProducts: number;
+}
+
+export interface Product {
+  id: number;
+  name: string;
+  description?: string | null;
+  status: string;
+  monthlyPriceSol?: number | null;
+  annualPriceSol?: number | null;
+  lifetimePriceSol?: number | null;
+  monthlyPriceUsdc?: number | null;
+  annualPriceUsdc?: number | null;
+  lifetimePriceUsdc?: number | null;
+  vaultWalletAddress?: string | null;
+  licenseCount?: number;
+  createdAt: string;
+}
+
+export interface CreateProductBody {
+  name: string;
+  description?: string;
+  status?: "active" | "inactive";
+  monthlyPriceSol?: number | null;
+  annualPriceSol?: number | null;
+  lifetimePriceSol?: number | null;
+  monthlyPriceUsdc?: number | null;
+  annualPriceUsdc?: number | null;
+  lifetimePriceUsdc?: number | null;
+  vaultWalletAddress?: string | null;
 }
 
 export interface Customer {
@@ -74,6 +110,8 @@ export interface License {
   customerId?: number | null;
   customerName?: string | null;
   customerEmail?: string | null;
+  productId?: number | null;
+  productName?: string | null;
   plan: string;
   status: string;
   instanceId?: string | null;
@@ -102,6 +140,7 @@ export interface Payment {
 
 export interface CreateLicenseBody {
   customerId?: number;
+  productId?: number;
   plan?: "monthly" | "annual" | "lifetime";
   expiresAt?: string;
   notes?: string;
