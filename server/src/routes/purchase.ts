@@ -2,47 +2,90 @@ import { Router } from "express";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { db, purchaseSessionsTable, productsTable } from "../db/index.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { generatePaymentWallet } from "../lib/paymentWallet.js";
-import { getPricing, getSetting } from "../lib/settings.js";
+import { getSetting } from "../lib/settings.js";
 
 const router = Router();
 
-// Merge product-level pricing on top of global pricing (product values take precedence when set)
-async function getEffectivePricing(productId?: number | null) {
-  const global = await getPricing();
-  if (!productId) return global;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  const [product] = await db.select().from(productsTable).where(eq(productsTable.id, productId));
-  if (!product) return global;
-
-  return {
-    monthly_price_sol:   product.monthlyPriceSol   ?? global.monthly_price_sol,
-    annual_price_sol:    product.annualPriceSol    ?? global.annual_price_sol,
-    lifetime_price_sol:  product.lifetimePriceSol  ?? global.lifetime_price_sol,
-    monthly_price_usdc:  product.monthlyPriceUsdc  ?? global.monthly_price_usdc,
-    annual_price_usdc:   product.annualPriceUsdc   ?? global.annual_price_usdc,
-    lifetime_price_usdc: product.lifetimePriceUsdc ?? global.lifetime_price_usdc,
-    vault_wallet_address: product.vaultWalletAddress ?? global.vault_wallet_address,
-  };
+async function resolveProduct(productId?: number | null, productName?: string | null) {
+  if (productId) {
+    const [p] = await db.select().from(productsTable).where(eq(productsTable.id, productId));
+    return p ?? null;
+  }
+  if (productName) {
+    const [p] = await db.select().from(productsTable)
+      .where(sql`lower(${productsTable.name}) = lower(${productName})`);
+    return p ?? null;
+  }
+  return null;
 }
 
+// ─── GET /purchase/products ────────────────────────────────────────────────────
+// Public — list all active products so clients can discover product IDs/names
+router.get("/products", async (_req, res) => {
+  const products = await db.select({
+    id:               productsTable.id,
+    name:             productsTable.name,
+    description:      productsTable.description,
+    monthlyPriceSol:  productsTable.monthlyPriceSol,
+    annualPriceSol:   productsTable.annualPriceSol,
+    lifetimePriceSol: productsTable.lifetimePriceSol,
+    monthlyPriceUsdc: productsTable.monthlyPriceUsdc,
+    annualPriceUsdc:  productsTable.annualPriceUsdc,
+    lifetimePriceUsdc:productsTable.lifetimePriceUsdc,
+  })
+    .from(productsTable)
+    .where(eq(productsTable.status, "active"));
+
+  res.json(products);
+});
+
 // ─── GET /purchase/pricing ─────────────────────────────────────────────────────
+// Requires productId (query param) OR productName (query param)
 router.get("/pricing", async (req, res) => {
-  const productId = req.query.productId ? parseInt(req.query.productId as string) : null;
-  const p = await getEffectivePricing(productId);
-  const { vault_wallet_address, ...publicPricing } = p;
-  res.json(publicPricing);
+  const productId   = req.query.productId   ? parseInt(req.query.productId as string) : null;
+  const productName = (req.query.productName as string) || null;
+
+  if (!productId && !productName) {
+    res.status(400).json({ error: "Provide productId or productName" });
+    return;
+  }
+
+  const product = await resolveProduct(productId, productName);
+  if (!product) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  if (product.status !== "active") {
+    res.status(400).json({ error: "Product is not available for purchase" });
+    return;
+  }
+
+  res.json({
+    productId:         product.id,
+    productName:       product.name,
+    monthlyPriceSol:   product.monthlyPriceSol,
+    annualPriceSol:    product.annualPriceSol,
+    lifetimePriceSol:  product.lifetimePriceSol,
+    monthlyPriceUsdc:  product.monthlyPriceUsdc,
+    annualPriceUsdc:   product.annualPriceUsdc,
+    lifetimePriceUsdc: product.lifetimePriceUsdc,
+  });
 });
 
 // ─── POST /purchase/init ───────────────────────────────────────────────────────
+// Requires productId OR productName — no global-pricing fallback
 router.post("/init", async (req, res) => {
   const schema = z.object({
-    email: z.string().email(),
-    name: z.string().min(1).max(100),
-    plan: z.enum(["monthly", "annual", "lifetime"]),
-    currency: z.enum(["SOL", "USDC"]),
-    productId: z.coerce.number().optional(),
+    email:       z.string().email(),
+    name:        z.string().min(1).max(100),
+    plan:        z.enum(["monthly", "annual", "lifetime"]),
+    currency:    z.enum(["SOL", "USDC"]),
+    productId:   z.coerce.number().optional(),
+    productName: z.string().optional(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -51,34 +94,46 @@ router.post("/init", async (req, res) => {
     return;
   }
 
-  const { email, name, plan, currency, productId } = parsed.data;
+  const { email, name, plan, currency, productId, productName } = parsed.data;
 
-  // Validate product exists and is active (if provided)
-  if (productId) {
-    const [product] = await db.select().from(productsTable).where(eq(productsTable.id, productId));
-    if (!product) {
-      res.status(400).json({ error: "Product not found" });
-      return;
-    }
-    if (product.status !== "active") {
-      res.status(400).json({ error: "Product is not available for purchase" });
-      return;
-    }
+  if (!productId && !productName) {
+    res.status(400).json({ error: "Provide productId or productName" });
+    return;
   }
 
-  const pricing = await getEffectivePricing(productId);
+  const product = await resolveProduct(productId ?? null, productName ?? null);
+  if (!product) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  if (product.status !== "active") {
+    res.status(400).json({ error: "Product is not available for purchase" });
+    return;
+  }
 
+  // Prices must be configured on the product — no silent global fallback
   const expectedAmountSol = currency === "SOL" ? (
-    plan === "monthly"  ? pricing.monthly_price_sol  :
-    plan === "annual"   ? pricing.annual_price_sol   :
-                          pricing.lifetime_price_sol
+    plan === "monthly"  ? product.monthlyPriceSol  :
+    plan === "annual"   ? product.annualPriceSol   :
+                          product.lifetimePriceSol
   ) : null;
 
   const expectedAmountUsdc = currency === "USDC" ? (
-    plan === "monthly"  ? pricing.monthly_price_usdc  :
-    plan === "annual"   ? pricing.annual_price_usdc   :
-                          pricing.lifetime_price_usdc
+    plan === "monthly"  ? product.monthlyPriceUsdc  :
+    plan === "annual"   ? product.annualPriceUsdc   :
+                          product.lifetimePriceUsdc
   ) : null;
+
+  const expectedAmount = currency === "SOL" ? expectedAmountSol : expectedAmountUsdc;
+  if (!expectedAmount || expectedAmount <= 0) {
+    res.status(400).json({
+      error: `No ${currency} price configured for the "${plan}" plan on this product. Contact the seller.`,
+    });
+    return;
+  }
+
+  // Use product-specific vault; fall back to global env only if product has none
+  const vaultAddress = product.vaultWalletAddress ?? await getSetting("vault_wallet_address");
 
   const { address, privateKey } = generatePaymentWallet();
   const sessionId = uuidv4();
@@ -88,7 +143,7 @@ router.post("/init", async (req, res) => {
   await db.insert(purchaseSessionsTable).values({
     id: sessionId,
     email, name, plan, currency,
-    productId: productId ?? null,
+    productId: product.id,
     expectedAmountSol,
     expectedAmountUsdc,
     walletAddress: address,
@@ -99,14 +154,15 @@ router.post("/init", async (req, res) => {
   });
 
   res.json({
-    purchaseId: sessionId,
-    walletAddress: address,
+    purchaseId:        sessionId,
+    walletAddress:     address,
     expectedAmountSol,
     expectedAmountUsdc,
     currency,
     plan,
-    productId: productId ?? null,
-    expiresAt: expiresAt.toISOString(),
+    productId:         product.id,
+    productName:       product.name,
+    expiresAt:         expiresAt.toISOString(),
   });
 });
 
@@ -122,12 +178,12 @@ router.get("/status/:id", async (req, res) => {
   }
 
   res.json({
-    status: session.status,
+    status:     session.status,
     licenseKey: session.status === "paid" ? session.licenseKey : null,
-    expiresAt: session.expiresAt,
-    currency: session.currency,
-    plan: session.plan,
-    productId: session.productId,
+    expiresAt:  session.expiresAt,
+    currency:   session.currency,
+    plan:       session.plan,
+    productId:  session.productId,
   });
 });
 
