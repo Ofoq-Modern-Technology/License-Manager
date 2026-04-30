@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  license-manager:
+    image: license-manager:latest   # or your DockerHub image, e.g. youruser/license-manager:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    volumes:
+      - license_data:/data          # SQLite database persisted across restarts
+    environment:
+      NODE_ENV: production
+      PORT: 8082
+      DATABASE_PATH: /data/licenseserver.db
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-changeme}            # Override with a strong token!
+      VAULT_WALLET_ADDRESS: ${VAULT_WALLET_ADDRESS:-}  # Your Solana wallet for payments
+      SOLANA_RPC: ${SOLANA_RPC:-https://api.mainnet-beta.solana.com}
+      MONTHLY_PRICE_SOL: ${MONTHLY_PRICE_SOL:-0.5}
+      ANNUAL_PRICE_SOL: ${ANNUAL_PRICE_SOL:-1.5}
+      LIFETIME_PRICE_SOL: ${LIFETIME_PRICE_SOL:-3}
+      MONTHLY_PRICE_USDC: ${MONTHLY_PRICE_USDC:-49}
+      ANNUAL_PRICE_USDC: ${ANNUAL_PRICE_USDC:-149}
+      LIFETIME_PRICE_USDC: ${LIFETIME_PRICE_USDC:-299}
+    restart: unless-stopped
+
+volumes:
+  license_data:
+    driver: local
