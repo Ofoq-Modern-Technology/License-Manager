@@ -127,20 +127,9 @@ npm run dev   # opens http://localhost:3000
 | `PORT` | No | HTTP port (default: `8082`) |
 | `DATABASE_PATH` | No | SQLite file path (default: `/data/licenseserver.db` in Docker) |
 
-### Global fallback pricing (optional)
+### Pricing
 
-**Pricing is managed per-product in the admin panel** under Products → Edit. You do not need to set the variables below if you configure all pricing through the admin UI.
-
-These env vars are only used as a fallback for any price field that isn't set on the product itself:
-
-| Variable | Default | Description |
-|---|---|---|
-| `MONTHLY_PRICE_SOL` | `0.5` | Fallback monthly price in SOL |
-| `ANNUAL_PRICE_SOL` | `1.5` | Fallback annual price in SOL |
-| `LIFETIME_PRICE_SOL` | `3` | Fallback lifetime price in SOL |
-| `MONTHLY_PRICE_USDC` | `49` | Fallback monthly price in USDC |
-| `ANNUAL_PRICE_USDC` | `149` | Fallback annual price in USDC |
-| `LIFETIME_PRICE_USDC` | `299` | Fallback lifetime price in USDC |
+All pricing is managed **per-product** in the admin panel under Products → Edit. There are no global pricing env vars — every product must have its prices set explicitly. Client apps must specify a `productId` or `productName` on every pricing and purchase request.
 
 ---
 
@@ -148,17 +137,17 @@ These env vars are only used as a fallback for any price field that isn't set on
 
 License Manager supports multiple products on a single server instance. Each product has:
 
-- **Name and description** — shown in the admin panel
+- **Name and description** — shown in the admin panel and returned by the public products API
 - **Status** — `active` (purchasable) or `inactive` (blocked from purchase)
-- **Per-product pricing** — monthly, annual, and lifetime prices in both SOL and USDC. Any field left blank falls back to the global env var default
+- **Per-product pricing** — monthly, annual, and lifetime prices in both SOL and USDC. Prices must be set per product; there are no server-wide defaults
 - **Per-product vault wallet** — payments for this product go to this wallet. Leave blank to use the global `VAULT_WALLET_ADDRESS`
 
 ### Typical setup
 
 1. Start the container with only `ADMIN_TOKEN` and `VAULT_WALLET_ADDRESS`
 2. Open the admin panel → **Products** → **New Product**
-3. Fill in the name, description, pricing, and (optionally) a dedicated vault wallet
-4. Pass `productId` when calling `/purchase/init` from your app
+3. Fill in the name, description, and all pricing fields
+4. Client apps call `GET /purchase/products` to discover products, then pass `productId` or `productName` on every request
 
 ---
 
@@ -169,14 +158,20 @@ License Manager supports multiple products on a single server instance. Each pro
 ```
 Your App                           License Manager Server
    │                                         │
-   │  1. GET /purchase/pricing?productId=1   │
+   │  0. GET /purchase/products              │
    │ ──────────────────────────────────────► │
    │ ◄────────────────────────────────────── │
-   │     { monthly_price_sol, ... }          │
+   │     [{ id, name, pricing... }]          │  ← pick a productId/name
+   │                                         │
+   │  1. GET /purchase/pricing               │
+   │     ?productId=1  (or ?productName=X)   │
+   │ ──────────────────────────────────────► │
+   │ ◄────────────────────────────────────── │
+   │     { monthlyPriceSol, ... }            │
    │                                         │
    │  2. POST /purchase/init                 │
    │     { email, name, plan, currency,      │
-   │       productId }                       │
+   │       productId }   ← required          │
    │ ──────────────────────────────────────► │
    │ ◄────────────────────────────────────── │
    │     { purchaseId, walletAddress,        │
@@ -198,29 +193,66 @@ Your App                           License Manager Server
    │     { valid: true, plan, expiresAt }    │
 ```
 
-### Step 1 — Fetch pricing for a product
+### Step 0 — Discover available products
+
+```
+GET https://your-server.com/purchase/products
+```
+
+Returns all active products with their IDs, names, and pricing. Use this to let users choose a product, or hard-code the product ID in your app if you only have one.
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "name": "Pro License",
+    "description": "Full access to all features",
+    "monthlyPriceSol":   0.5,
+    "annualPriceSol":    1.5,
+    "lifetimePriceSol":  3.0,
+    "monthlyPriceUsdc":  49,
+    "annualPriceUsdc":   149,
+    "lifetimePriceUsdc": 299
+  }
+]
+```
+
+---
+
+### Step 1 — Fetch pricing for a specific product
+
+`productId` **or** `productName` is required — the server will return 400 if neither is provided.
 
 ```
 GET https://your-server.com/purchase/pricing?productId=1
 ```
 
+Or by name:
+
+```
+GET https://your-server.com/purchase/pricing?productName=Pro+License
+```
+
 **Response:**
 ```json
 {
-  "monthly_price_sol":  0.5,
-  "annual_price_sol":   1.5,
-  "lifetime_price_sol": 3.0,
-  "monthly_price_usdc":  49,
-  "annual_price_usdc":   149,
-  "lifetime_price_usdc": 299
+  "productId":         1,
+  "productName":       "Pro License",
+  "monthlyPriceSol":   0.5,
+  "annualPriceSol":    1.5,
+  "lifetimePriceSol":  3.0,
+  "monthlyPriceUsdc":  49,
+  "annualPriceUsdc":   149,
+  "lifetimePriceUsdc": 299
 }
 ```
-
-The `productId` is optional. Without it, the global fallback pricing is returned.
 
 ---
 
 ### Step 2 — Create a purchase session
+
+`productId` **or** `productName` is **required**. If the requested plan has no price configured on the product, the server returns 400 instead of silently charging zero.
 
 ```
 POST https://your-server.com/purchase/init
@@ -231,7 +263,7 @@ Content-Type: application/json
   "name":      "Jane Doe",
   "plan":      "monthly",        // "monthly" | "annual" | "lifetime"
   "currency":  "SOL",            // "SOL" | "USDC"
-  "productId": 1                 // optional — ties the license to this product
+  "productId": 1                 // required (or use "productName": "Pro License")
 }
 ```
 
@@ -241,9 +273,11 @@ Content-Type: application/json
   "purchaseId":        "550e8400-e29b-41d4-a716-446655440000",
   "walletAddress":     "A1b2C3d4E5f6...",
   "expectedAmountSol": 0.5,
+  "expectedAmountUsdc": null,
   "currency":          "SOL",
   "plan":              "monthly",
   "productId":         1,
+  "productName":       "Pro License",
   "expiresAt":         "2025-05-01T12:30:00.000Z"
 }
 ```
@@ -304,13 +338,19 @@ Content-Type: application/json
 
 ```typescript
 const LICENSE_SERVER = "https://your-server.com";
-const PRODUCT_ID = 1;
 
-// 1. Get pricing
+// 0. Discover products (or hard-code the ID if you only have one)
+const products = await fetch(`${LICENSE_SERVER}/purchase/products`).then(r => r.json());
+const product = products[0]; // pick the product your app sells
+const PRODUCT_ID: number = product.id;
+
+// 1. Get pricing for that product
 const pricing = await fetch(`${LICENSE_SERVER}/purchase/pricing?productId=${PRODUCT_ID}`)
   .then(r => r.json());
 
-// 2. Create invoice
+console.log(`Monthly: ${pricing.monthlyPriceSol} SOL / $${pricing.monthlyPriceUsdc} USDC`);
+
+// 2. Create invoice (productId is required)
 const session = await fetch(`${LICENSE_SERVER}/purchase/init`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -319,7 +359,7 @@ const session = await fetch(`${LICENSE_SERVER}/purchase/init`, {
     name: "Jane",
     plan: "lifetime",
     currency: "SOL",
-    productId: PRODUCT_ID,
+    productId: PRODUCT_ID,   // required — or use productName: product.name
   }),
 }).then(r => r.json());
 
@@ -356,8 +396,9 @@ console.log(`License OK — ${plan}, expires ${expiresAt}`);
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check → `{ ok: true }` |
-| GET | `/purchase/pricing?productId=` | Product pricing (falls back to global if no productId) |
-| POST | `/purchase/init` | Create a purchase session |
+| GET | `/purchase/products` | List all active products with pricing |
+| GET | `/purchase/pricing?productId=` or `?productName=` | Pricing for a specific product (productId or productName required) |
+| POST | `/purchase/init` | Create a purchase session (productId or productName required) |
 | GET | `/purchase/status/:id` | Poll status + retrieve license key |
 | POST | `/license/validate` | Validate a license key |
 | POST | `/license/activate` | Bind a license to a machine instance |
