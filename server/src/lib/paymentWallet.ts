@@ -10,16 +10,47 @@ import {
 const RPC = process.env.SOLANA_RPC ?? "https://api.mainnet-beta.solana.com";
 const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
+// ── Minimal base58 decoder (no external dep needed) ───────────────────────────
+const B58_ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function decodeBase58(str: string): Uint8Array {
+  const bytes = [0];
+  for (const char of str) {
+    let carry = B58_ALPHA.indexOf(char);
+    if (carry < 0) throw new Error(`Invalid base58 character: ${char}`);
+    for (let i = 0; i < bytes.length; i++) {
+      carry += bytes[i] * 58;
+      bytes[i] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  for (let i = 0; i < str.length && str[i] === "1"; i++) bytes.push(0);
+  return new Uint8Array(bytes.reverse());
+}
+
+/**
+ * Restore a Keypair from either:
+ *   - base64 string  (used internally for payment wallets)
+ *   - base58 string  (standard Phantom / Solana CLI export format for the vault key)
+ */
+export function restoreKeypair(privateKey: string): Keypair {
+  // Try base64 first — payment wallets are stored this way
+  const b64 = Buffer.from(privateKey, "base64");
+  if (b64.length === 64) return Keypair.fromSecretKey(b64);
+
+  // Fall back to base58 (e.g. VAULT_WALLET_PRIVATE_KEY env var)
+  const b58 = decodeBase58(privateKey);
+  if (b58.length === 64) return Keypair.fromSecretKey(b58);
+
+  throw new Error(`Cannot decode private key: expected 64 bytes, got ${b64.length} (base64) or ${b58.length} (base58)`);
+}
+
 export function generatePaymentWallet(): { address: string; privateKey: string } {
   const kp = Keypair.generate();
   return {
     address: kp.publicKey.toBase58(),
     privateKey: Buffer.from(kp.secretKey).toString("base64"),
   };
-}
-
-export function restoreKeypair(privateKeyBase64: string): Keypair {
-  return Keypair.fromSecretKey(Buffer.from(privateKeyBase64, "base64"));
 }
 
 export function getConnection(): Connection {
