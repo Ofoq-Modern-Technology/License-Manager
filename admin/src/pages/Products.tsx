@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type Product, type CreateProductBody } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
-import { Package, Plus, Pencil, Trash2, Loader2, X, Check, ChevronDown, ChevronUp } from "lucide-react";
+import { Package, Plus, Pencil, Trash2, Loader2, X, Check, ChevronDown, ChevronUp, Copy, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -79,6 +79,26 @@ function PricingFields({
 function parseNum(v: string): number | null {
   const n = parseFloat(v);
   return isNaN(n) || v === "" ? null : n;
+}
+
+function CopyIdButton({ id }: { id: number }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(String(id)).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }).catch(() => {});
+  }
+  return (
+    <button
+      onClick={copy}
+      title="Copy product ID"
+      className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-primary/30 bg-primary/5 text-primary font-mono text-[10px] hover:bg-primary/10 transition-colors"
+    >
+      {copied ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      ID: {id}
+    </button>
+  );
 }
 
 export default function Products() {
@@ -314,6 +334,7 @@ export default function Products() {
                     <span className={cn("px-1.5 py-0.5 rounded border text-[10px] font-mono", STATUS_COLORS[p.status] ?? "text-muted-foreground")}>
                       {p.status}
                     </span>
+                    <CopyIdButton id={p.id} />
                   </div>
                   {p.description && (
                     <p className="text-xs text-muted-foreground font-mono truncate">{p.description}</p>
