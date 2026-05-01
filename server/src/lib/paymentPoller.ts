@@ -132,16 +132,8 @@ async function sweepFundsAsync(session: Session): Promise<void> {
     if (session.currency === "SOL") {
       sig = await sweepSOL(session.walletPrivateKey, vaultAddress);
     } else {
-      const vaultKey = process.env.VAULT_WALLET_PRIVATE_KEY ?? "";
-      if (!vaultKey) {
-        console.warn("[sweep] VAULT_WALLET_PRIVATE_KEY not set — cannot sweep USDC");
-        await db.update(purchaseSessionsTable)
-          .set({ sweepStatus: "skipped" })
-          .where(eq(purchaseSessionsTable.id, session.id));
-        return;
-      }
       const usdcMicro = BigInt(Math.floor((session.amountReceivedUsdc ?? 0) * 1_000_000));
-      sig = await sweepUSDC(session.walletPrivateKey, vaultAddress, vaultKey, usdcMicro);
+      sig = await sweepUSDC(session.walletPrivateKey, vaultAddress, usdcMicro);
     }
 
     await db.update(purchaseSessionsTable)
