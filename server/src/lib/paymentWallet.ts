@@ -10,6 +10,9 @@ import {
 const RPC = process.env.SOLANA_RPC ?? "https://api.mainnet-beta.solana.com";
 const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
+// SOL sent to each USDC payment wallet to cover sweep fees + vault ATA creation
+const SWEEP_FUND_LAMPORTS = 4_000_000; // 0.004 SOL
+
 // ── Minimal base58 decoder (no external dep needed) ───────────────────────────
 const B58_ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function decodeBase58(str: string): Uint8Array {
@@ -31,14 +34,12 @@ function decodeBase58(str: string): Uint8Array {
 /**
  * Restore a Keypair from either:
  *   - base64 string  (used internally for payment wallets)
- *   - base58 string  (standard Phantom / Solana CLI export format for the vault key)
+ *   - base58 string  (standard Phantom / Solana CLI export)
  */
 export function restoreKeypair(privateKey: string): Keypair {
-  // Try base64 first — payment wallets are stored this way
   const b64 = Buffer.from(privateKey, "base64");
   if (b64.length === 64) return Keypair.fromSecretKey(b64);
 
-  // Fall back to base58 (e.g. VAULT_WALLET_PRIVATE_KEY env var)
   const b58 = decodeBase58(privateKey);
   if (b58.length === 64) return Keypair.fromSecretKey(b58);
 
@@ -57,6 +58,30 @@ export function getConnection(): Connection {
   return new Connection(RPC, "confirmed");
 }
 
+/**
+ * Fund a USDC payment wallet with a small amount of SOL so it can pay its own
+ * sweep transaction fees later. Called at session creation time.
+ *
+ * feePayerPrivateKey = VAULT_WALLET_PRIVATE_KEY (small ops/hot wallet with SOL)
+ */
+export async function fundPaymentWallet(
+  paymentWalletAddress: string,
+  feePayerPrivateKey: string,
+): Promise<void> {
+  const conn = getConnection();
+  const feePayer = restoreKeypair(feePayerPrivateKey);
+  const dest = new PublicKey(paymentWalletAddress);
+
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: feePayer.publicKey,
+      toPubkey: dest,
+      lamports: SWEEP_FUND_LAMPORTS,
+    }),
+  );
+  await sendAndConfirmTransaction(conn, tx, [feePayer]);
+}
+
 export async function checkWalletBalance(
   address: string,
   currency: "SOL" | "USDC",
@@ -69,7 +94,6 @@ export async function checkWalletBalance(
     return balance / LAMPORTS_PER_SOL;
   }
 
-  // USDC
   try {
     const ata = await getAssociatedTokenAddress(USDC_MINT, pubkey);
     const account = await getAccount(conn, ata);
@@ -91,7 +115,7 @@ export async function sweepSOL(
   const balance = await conn.getBalance(paymentKP.publicKey);
   const fee = 5_000;
   const amount = balance - fee;
-  if (amount <= 0) throw new Error("Insufficient balance to sweep");
+  if (amount <= 0) throw new Error("Insufficient SOL balance to sweep");
 
   const tx = new Transaction().add(
     SystemProgram.transfer({
@@ -100,31 +124,44 @@ export async function sweepSOL(
       lamports: amount,
     }),
   );
-
   return sendAndConfirmTransaction(conn, tx, [paymentKP]);
 }
 
-// Sweep USDC from payment wallet to vault.
-// Vault keypair is needed as fee payer (payment wallet has no SOL).
+/**
+ * Sweep USDC from a payment wallet to the vault address.
+ *
+ * The payment wallet was pre-funded with SOL at session creation time, so it
+ * can pay its own transaction fees here — no vault private key needed.
+ *
+ * The vault is just a destination address (can be a cold wallet).
+ */
 export async function sweepUSDC(
   paymentWalletPrivateKey: string,
   vaultAddress: string,
-  vaultPrivateKey: string,
   usdcAmount: bigint,
 ): Promise<string> {
-  if (!vaultPrivateKey) throw new Error("VAULT_WALLET_PRIVATE_KEY not set");
   const conn = getConnection();
   const paymentKP = restoreKeypair(paymentWalletPrivateKey);
-  const vaultKP = restoreKeypair(vaultPrivateKey);
   const vault = new PublicKey(vaultAddress);
 
-  const sourceATA = await getAssociatedTokenAddress(USDC_MINT, paymentKP.publicKey);
-  const destATA = await getOrCreateAssociatedTokenAccount(conn, vaultKP, USDC_MINT, vault);
-
-  const tx = new Transaction().add(
-    createTransferInstruction(sourceATA, destATA.address, paymentKP.publicKey, usdcAmount),
+  // Payment wallet creates vault's USDC ATA if it doesn't exist (and pays for it)
+  const destATA = await getOrCreateAssociatedTokenAccount(
+    conn,
+    paymentKP,   // fee payer — payment wallet has SOL from fundPaymentWallet()
+    USDC_MINT,
+    vault,
   );
 
-  // Vault pays fees; payment wallet signs as token authority
-  return sendAndConfirmTransaction(conn, tx, [vaultKP, paymentKP]);
+  const sourceATA = await getAssociatedTokenAddress(USDC_MINT, paymentKP.publicKey);
+
+  const tx = new Transaction().add(
+    createTransferInstruction(
+      sourceATA,
+      destATA.address,
+      paymentKP.publicKey,
+      usdcAmount,
+    ),
+  );
+
+  return sendAndConfirmTransaction(conn, tx, [paymentKP]);
 }
