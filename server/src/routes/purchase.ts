@@ -3,7 +3,7 @@ import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { db, purchaseSessionsTable, productsTable } from "../db/index.js";
 import { eq, sql } from "drizzle-orm";
-import { generatePaymentWallet } from "../lib/paymentWallet.js";
+import { generatePaymentWallet, fundPaymentWallet } from "../lib/paymentWallet.js";
 import { getSetting } from "../lib/settings.js";
 
 const router = Router();
@@ -152,6 +152,19 @@ router.post("/init", async (req, res) => {
     sweepStatus: "pending",
     expiresAt,
   });
+
+  // For USDC sessions: pre-fund payment wallet with SOL so it can pay its own
+  // sweep fees later (vault private key not needed at sweep time).
+  if (currency === "USDC") {
+    const feePayerKey = process.env.VAULT_WALLET_PRIVATE_KEY ?? "";
+    if (feePayerKey) {
+      fundPaymentWallet(address, feePayerKey).catch((err: unknown) => {
+        console.warn(`[purchase] Could not pre-fund USDC payment wallet ${address}:`, err);
+      });
+    } else {
+      console.warn("[purchase] VAULT_WALLET_PRIVATE_KEY not set — USDC sweep may fail due to missing fees");
+    }
+  }
 
   res.json({
     purchaseId:        sessionId,
