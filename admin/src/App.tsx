@@ -8,6 +8,7 @@ import Products from "@/pages/Products";
 import Customers from "@/pages/Customers";
 import Licenses from "@/pages/Licenses";
 import Payments from "@/pages/Payments";
+import Invoices from "@/pages/Invoices";
 import Pricing from "@/pages/Pricing";
 import Layout from "@/components/Layout";
 
@@ -78,6 +79,7 @@ function App() {
             <Route path="/customers" component={Customers} />
             <Route path="/licenses" component={Licenses} />
             <Route path="/payments" component={Payments} />
+            <Route path="/invoices" component={Invoices} />
             <Route path="/pricing" component={Pricing} />
           </Switch>
         </Layout>
