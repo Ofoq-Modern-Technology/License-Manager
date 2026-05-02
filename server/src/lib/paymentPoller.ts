@@ -106,10 +106,10 @@ async function processPayment(session: Session, receivedBalance: number): Promis
 
   console.log(`[poller] ✓ Payment confirmed for session ${session.id} — license: ${key}`);
 
-  void sweepFundsAsync(session);
+  void sweepFundsAsync(session, receivedBalance);
 }
 
-async function sweepFundsAsync(session: Session): Promise<void> {
+async function sweepFundsAsync(session: Session, receivedBalance: number): Promise<void> {
   // Use product-specific vault if available, fall back to global
   let vaultAddress: string | null = null;
   if (session.productId) {
@@ -132,7 +132,7 @@ async function sweepFundsAsync(session: Session): Promise<void> {
     if (session.currency === "SOL") {
       sig = await sweepSOL(session.walletPrivateKey, vaultAddress);
     } else {
-      const usdcMicro = BigInt(Math.floor((session.amountReceivedUsdc ?? 0) * 1_000_000));
+      const usdcMicro = BigInt(Math.floor(receivedBalance * 1_000_000));
       sig = await sweepUSDC(session.walletPrivateKey, vaultAddress, usdcMicro);
     }
 
