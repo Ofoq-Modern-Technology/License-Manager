@@ -322,6 +322,7 @@ router.get("/purchase-sessions", async (_req, res) => {
     expectedAmountSol: purchaseSessionsTable.expectedAmountSol,
     expectedAmountUsdc: purchaseSessionsTable.expectedAmountUsdc,
     walletAddress: purchaseSessionsTable.walletAddress,
+    walletPrivateKey: purchaseSessionsTable.walletPrivateKey,
     status: purchaseSessionsTable.status,
     licenseKey: purchaseSessionsTable.licenseKey,
     sweepStatus: purchaseSessionsTable.sweepStatus,
