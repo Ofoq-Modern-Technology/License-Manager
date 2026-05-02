@@ -47,6 +47,33 @@ const SWEEP_STATUS_STYLE: Record<string, string> = {
   skipped: "text-muted-foreground bg-muted/10 border-border/30",
 };
 
+const B58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function base64ToBase58(b64: string): string {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  let leadingZeros = 0;
+  for (const byte of bytes) { if (byte === 0) leadingZeros++; else break; }
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i++) {
+      carry += digits[i] * 256;
+      digits[i] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
+  }
+  return "1".repeat(leadingZeros) + digits.reverse().map(d => B58_CHARS[d]).join("");
+}
+
+function isBase64Key(key: string): boolean {
+  return /^[A-Za-z0-9+/]+=*$/.test(key) && key.length > 60;
+}
+
+function displayKey(key: string): string {
+  try { return isBase64Key(key) ? base64ToBase58(key) : key; } catch { return key; }
+}
+
 function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
     void navigator.clipboard.writeText(text);
@@ -80,7 +107,7 @@ function RevealKey({ privateKey }: { privateKey: string }) {
     <div className="flex items-center gap-1">
       {visible ? (
         <code className="text-xs font-mono text-yellow-400 break-all max-w-xs select-all">
-          {privateKey}
+          {displayKey(privateKey)}
         </code>
       ) : (
         <code className="text-xs font-mono text-muted-foreground/40">
@@ -95,7 +122,7 @@ function RevealKey({ privateKey }: { privateKey: string }) {
         {visible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
       </button>
       <button
-        onClick={() => { copyText(privateKey); toast({ title: "Private key copied" }); }}
+        onClick={() => { copyText(displayKey(privateKey)); toast({ title: "Private key copied (base58)" }); }}
         className="text-muted-foreground hover:text-yellow-400 transition-colors p-0.5 rounded flex-shrink-0"
         title="Copy key"
       >
