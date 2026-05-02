@@ -1,5 +1,5 @@
 import { useLocation } from "wouter";
-import { LayoutDashboard, Users, Key, CreditCard, LogOut, Terminal, Settings2, Package } from "lucide-react";
+import { LayoutDashboard, Users, Key, CreditCard, LogOut, Terminal, Settings2, Package, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -8,6 +8,7 @@ const NAV = [
   { path: "/customers", label: "Customers", icon: Users },
   { path: "/licenses", label: "Licenses", icon: Key },
   { path: "/payments", label: "Payments", icon: CreditCard },
+  { path: "/invoices", label: "Invoices", icon: FileText },
   { path: "/pricing", label: "Pricing", icon: Settings2 },
 ];
 
